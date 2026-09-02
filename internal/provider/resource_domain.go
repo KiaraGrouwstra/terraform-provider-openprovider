@@ -4,10 +4,12 @@ package provider
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/charpand/terraform-provider-openprovider/internal/client"
 	"github.com/charpand/terraform-provider-openprovider/internal/client/domains"
+	"github.com/charpand/terraform-provider-openprovider/internal/client/prices"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -15,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -88,6 +91,74 @@ func mapDnssecKeysToState(ctx context.Context, keys []domains.DnssecKey, diags *
 	}, stateKeys)
 	diags.Append(listDiags...)
 	return listValue
+}
+
+// guardSpend asks Openprovider what the operation costs and reports the quote
+// in minor units, or refuses when it is above `max_cost`. It returns false once
+// it has added a diagnostic, so the caller returns without ordering anything.
+//
+// Every way of not getting a usable quote is a refusal rather than a warning.
+// The point of the bound is that a mistake in the configuration costs nothing,
+// and a bound that gives way when the quote is unreadable does not hold.
+func guardSpend(
+	c *client.Client,
+	plan *DomainModel,
+	name, extension, operation string,
+	diags *diag.Diagnostics,
+) (int64, bool) {
+	currency := "EUR"
+	if !plan.Currency.IsNull() && plan.Currency.ValueString() != "" {
+		currency = plan.Currency.ValueString()
+	}
+
+	period := plan.Period.ValueInt64()
+	if plan.Period.IsNull() || plan.Period.IsUnknown() || period < 1 {
+		period = 1
+	}
+
+	quote, err := prices.Create(c, name, extension, period)
+	if err != nil {
+		diags.AddError(
+			"Could Not Read the Price",
+			fmt.Sprintf("Openprovider was not asked to %s %s.%s, because its price could not be read: %s", operation, name, extension, err.Error()),
+		)
+		return 0, false
+	}
+
+	charge := quote.Charge()
+	if charge.Price <= 0 {
+		diags.AddError(
+			"Could Not Read the Price",
+			fmt.Sprintf("Openprovider quoted no price for %s.%s, so the max_cost bound cannot be held and nothing was ordered.", name, extension),
+		)
+		return 0, false
+	}
+
+	if charge.Currency != currency {
+		diags.AddError(
+			"Quote Is In Another Currency",
+			fmt.Sprintf(
+				"max_cost is stated in %s and Openprovider quoted %s for %s.%s. Nothing was ordered: converting the two here would decide with a rate this provider does not know.",
+				currency, charge.Currency, name, extension,
+			),
+		)
+		return 0, false
+	}
+
+	// Rounded up, so a bound is never passed by a fraction of a cent.
+	cost := int64(math.Ceil(charge.Price * 100))
+	if cost > plan.MaxCost.ValueInt64() {
+		diags.AddError(
+			"Costs More Than max_cost",
+			fmt.Sprintf(
+				"Openprovider quoted %d %s cents to %s %s.%s, above the max_cost of %d. Nothing was ordered.",
+				cost, currency, operation, name, extension, plan.MaxCost.ValueInt64(),
+			),
+		)
+		return 0, false
+	}
+
+	return cost, true
 }
 
 // NewDomainResource returns a new instance of the domain resource.
@@ -164,6 +235,21 @@ func (r *DomainResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"ns_group": schema.StringAttribute{
 				MarkdownDescription: "The nameserver group to use for this domain. Use this instead of nameserver blocks.",
 				Optional:            true,
+			},
+			"max_cost": schema.Int64Attribute{
+				MarkdownDescription: "The most, in minor units of `currency` (cents for EUR and USD), that this registration or transfer may cost. The live quote is read before anything is ordered, and the apply fails without spending if the quote is higher. No bound is held when this is unset.",
+				Optional:            true,
+			},
+			"currency": schema.StringAttribute{
+				MarkdownDescription: "The currency `max_cost` is stated in. Defaults to EUR. A quote that comes back in another currency fails the apply rather than being converted, because a wrong conversion would spend money.",
+				Optional:            true,
+			},
+			"cost": schema.Int64Attribute{
+				MarkdownDescription: "What the operation was quoted at, in minor units of `currency`, at the time it ran.",
+				Computed:            true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 			},
 			"dnssec_keys": schema.ListNestedAttribute{
 				MarkdownDescription: "DNSSEC keys for the domain. Optional.",
@@ -255,6 +341,24 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	// Check if this is a transfer (auth_code provided) or a new registration
 	isTransfer := !plan.AuthCode.IsNull() && plan.AuthCode.ValueString() != ""
+
+	// Read the live quote and hold it against `max_cost` before anything is
+	// ordered. An apply that would spend more than it was told to must fail
+	// having spent nothing, so this runs ahead of both branches below. With no
+	// `max_cost` there is no bound to hold, and the API is not asked.
+	plan.Cost = types.Int64Null()
+	if !plan.MaxCost.IsNull() && !plan.MaxCost.IsUnknown() {
+		operation := "create"
+		if isTransfer {
+			operation = "transfer"
+		}
+
+		cost, ok := guardSpend(r.client, &plan, name, extension, operation, &resp.Diagnostics)
+		if !ok {
+			return
+		}
+		plan.Cost = types.Int64Value(cost)
+	}
 
 	if isTransfer {
 		// Domain Transfer
