@@ -43,8 +43,12 @@ func NewClient(config Config) *Client {
 
 	httpClient := config.HTTPClient
 	if httpClient == nil {
+		// A registration can take longer than a request timeout sized for a
+		// read: the first live one answered after the 30s the client used to
+		// allow, so the order went through while the apply reported a failure
+		// and recorded nothing.
 		httpClient = &http.Client{
-			Timeout: time.Second * 30,
+			Timeout: time.Second * 180,
 		}
 	}
 
