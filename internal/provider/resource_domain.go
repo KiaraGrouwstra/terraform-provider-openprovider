@@ -16,7 +16,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -38,6 +37,35 @@ var dnssecKeysAttrTypes = map[string]attr.Type{
 	"flags":      types.Int64Type,
 	"protocol":   types.Int64Type,
 	"public_key": types.StringType,
+}
+
+// dnssecEnabledFollowsKeys plans `is_dnssec_enabled` from the prior state only
+// while `dnssec_keys` is unchanged. The API turns the flag on or off when the
+// keys change, so a plan that carried the prior value over an update to the keys
+// would be contradicted by the result.
+type dnssecEnabledFollowsKeys struct{}
+
+func (m dnssecEnabledFollowsKeys) Description(ctx context.Context) string {
+	return m.MarkdownDescription(ctx)
+}
+
+func (m dnssecEnabledFollowsKeys) MarkdownDescription(_ context.Context) string {
+	return "Keeps the prior value unless `dnssec_keys` changes."
+}
+
+func (m dnssecEnabledFollowsKeys) PlanModifyBool(ctx context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse) {
+	if req.State.Raw.IsNull() || !req.ConfigValue.IsNull() || !req.PlanValue.IsUnknown() {
+		return
+	}
+	var planKeys, stateKeys types.List
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("dnssec_keys"), &planKeys)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("dnssec_keys"), &stateKeys)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if planKeys.Equal(stateKeys) {
+		resp.PlanValue = req.StateValue
+	}
 }
 
 // DomainResource is the resource implementation.
@@ -284,7 +312,7 @@ func (r *DomainResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.Bool{
-					boolplanmodifier.UseStateForUnknown(),
+					dnssecEnabledFollowsKeys{},
 				},
 			},
 			"expiration_date": schema.StringAttribute{
