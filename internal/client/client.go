@@ -3,7 +3,9 @@ package client
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/charpand/terraform-provider-openprovider/internal/client/authentication"
@@ -98,7 +100,11 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp, fmt.Errorf("api error: status %d", resp.StatusCode)
+		// The body carries the API's reason (`{"desc":...,"code":...}`);
+		// without it a refusal reads as a bare status.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		return resp, fmt.Errorf("api error: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	return resp, nil
