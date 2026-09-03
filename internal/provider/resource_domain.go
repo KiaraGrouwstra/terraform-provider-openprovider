@@ -720,8 +720,25 @@ func (r *DomainResource) Update(ctx context.Context, req resource.UpdateRequest,
 	var readResp resource.ReadResponse
 	readResp.State = resp.State
 	r.Read(ctx, readReq, &readResp)
-	resp.State = readResp.State
 	resp.Diagnostics.Append(readResp.Diagnostics...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// The read starts from the prior state, and the API has no record of
+	// `period`, `max_cost` or `currency`: they describe the order, not the
+	// domain. Carry them over from the plan, or an update leaves them at
+	// whatever the prior state held -- null after an import -- and the
+	// framework rejects the result as inconsistent with the plan.
+	var final DomainModel
+	resp.Diagnostics.Append(readResp.State.Get(ctx, &final)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	final.Period = plan.Period
+	final.MaxCost = plan.MaxCost
+	final.Currency = plan.Currency
+	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 }
 
 // Delete prevents deletion of domains as a safety measure.
