@@ -57,13 +57,16 @@ func (m dnssecEnabledFollowsKeys) PlanModifyBool(ctx context.Context, req planmo
 	if req.State.Raw.IsNull() || !req.ConfigValue.IsNull() || !req.PlanValue.IsUnknown() {
 		return
 	}
-	var planKeys, stateKeys types.List
-	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("dnssec_keys"), &planKeys)...)
+	var configKeys, stateKeys types.List
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("dnssec_keys"), &configKeys)...)
 	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("dnssec_keys"), &stateKeys)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if planKeys.Equal(stateKeys) {
+	// The config is compared, not the plan: a null config keeps the keys the
+	// state holds, and the plan's own value can still be unknown here, because
+	// attribute modifiers run in no fixed order.
+	if configKeys.IsNull() || configKeys.Equal(stateKeys) {
 		resp.PlanValue = req.StateValue
 	}
 }
@@ -229,6 +232,9 @@ func (r *DomainResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"status": schema.StringAttribute{
 				MarkdownDescription: "The current status of the domain. Common values: REQ (transfer requested), ACT (active/completed).",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"autorenew": schema.BoolAttribute{
 				MarkdownDescription: "Whether the domain should auto-renew.",
@@ -244,16 +250,25 @@ func (r *DomainResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				MarkdownDescription: "The admin contact handle for the domain.",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"tech_handle": schema.StringAttribute{
 				MarkdownDescription: "The tech contact handle for the domain.",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"billing_handle": schema.StringAttribute{
 				MarkdownDescription: "The billing contact handle for the domain.",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"period": schema.Int64Attribute{
 				MarkdownDescription: "Registration period in years. Only applicable for domain registration (not transfers).",
@@ -318,6 +333,9 @@ func (r *DomainResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"expiration_date": schema.StringAttribute{
 				MarkdownDescription: "The domain expiration date.",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 		},
 	}
@@ -726,7 +744,9 @@ func (r *DomainResource) Update(ctx context.Context, req resource.UpdateRequest,
 
 	// Update DNSSEC enabled if changed
 	if !plan.IsDnssecEnabled.Equal(state.IsDnssecEnabled) {
-		if !plan.IsDnssecEnabled.IsNull() {
+		// An unknown flag is one the keys decide: the API sets it with them, and
+		// the value read from an unknown is false, which would turn DNSSEC off.
+		if !plan.IsDnssecEnabled.IsNull() && !plan.IsDnssecEnabled.IsUnknown() {
 			enabled := plan.IsDnssecEnabled.ValueBool()
 			updateReq.IsDnssecEnabled = &enabled
 		}
