@@ -2,10 +2,6 @@
 package domains
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-
 	"github.com/charpand/terraform-provider-openprovider/internal/client"
 )
 
@@ -67,24 +63,5 @@ type ListDomainsResponse struct {
 
 // List retrieves a list of domains from the Openprovider API.
 func List(c *client.Client) ([]Domain, error) {
-	path := "/v1beta/domains"
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s%s", c.BaseURL, path), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	var results ListDomainsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
-		return nil, err
-	}
-	return results.Data.Results, nil
+	return ListWith(c, ListOptions{})
 }

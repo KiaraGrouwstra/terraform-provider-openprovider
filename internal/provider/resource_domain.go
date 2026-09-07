@@ -824,12 +824,14 @@ func (r *DomainResource) ImportState(ctx context.Context, req resource.ImportSta
 // getDomainByName finds a domain by its name using the List API.
 // Returns nil if the domain is not found.
 func getDomainByName(c *client.Client, domainName string) (*domains.Domain, error) {
-	domainList, err := domains.List(c)
+	// Filtered on the API's side, so the lookup does not depend on the
+	// account fitting in one page of the listing.
+	domainList, err := domains.ListWith(c, domains.ListOptions{FullName: domainName})
 	if err != nil {
 		return nil, err
 	}
 
-	// Search for domain by name
+	// The filter matches on the name; keep only the exact one.
 	for _, domain := range domainList {
 		fullName := domain.Domain.Name + "." + domain.Domain.Extension
 		if fullName == domainName {
