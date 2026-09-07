@@ -271,3 +271,26 @@ func TestConvertDnssecKeysToAPIHandlesNull(t *testing.T) {
 		})
 	}
 }
+
+func TestKnownStringResolvesUnknown(t *testing.T) {
+	cases := []struct {
+		name    string
+		fromAPI string
+		planned types.String
+		want    types.String
+	}{
+		{"api value wins over unknown", "AB123456-EU", types.StringUnknown(), types.StringValue("AB123456-EU")},
+		{"api value wins over null", "AB123456-EU", types.StringNull(), types.StringValue("AB123456-EU")},
+		{"api value wins over a planned value", "AB123456-EU", types.StringValue("CD654321-EU"), types.StringValue("AB123456-EU")},
+		{"no api value keeps a planned value", "", types.StringValue("CD654321-EU"), types.StringValue("CD654321-EU")},
+		{"no api value keeps null", "", types.StringNull(), types.StringNull()},
+		{"no api value resolves unknown to empty", "", types.StringUnknown(), types.StringValue("")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := knownString(c.fromAPI, c.planned); !got.Equal(c.want) {
+				t.Errorf("knownString(%q, %v) = %v, want %v", c.fromAPI, c.planned, got, c.want)
+			}
+		})
+	}
+}
