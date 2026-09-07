@@ -123,6 +123,7 @@ func (p *OpenproviderProvider) DataSources(_ context.Context) []func() datasourc
 	return []func() datasource.DataSource{
 		NewCustomerDataSource,
 		NewDomainDataSource,
+		NewDomainCheckDataSource,
 		NewNSGroupDataSource,
 		NewDNSZoneDataSource,
 		NewSSLProductDataSource,
