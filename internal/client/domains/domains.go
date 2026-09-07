@@ -54,7 +54,8 @@ type Domain struct {
 
 // ListDomainsResponse represents a response from the domains listing endpoint.
 type ListDomainsResponse struct {
-	Code int `json:"code"`
+	Code int    `json:"code"`
+	Desc string `json:"desc,omitempty"`
 	Data struct {
 		Results []Domain `json:"results"`
 		Total   int      `json:"total"`

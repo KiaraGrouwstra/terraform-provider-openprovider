@@ -59,5 +59,12 @@ func ListWith(c *client.Client, opts ListOptions) ([]Domain, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
 		return nil, err
 	}
+	// The API answers a refused listing with a 200 and a non-zero `code`, and
+	// no results. Told apart from an account that holds none of the names
+	// asked for: a caller that reads an empty listing as "not held" would
+	// otherwise drop a held domain.
+	if results.Code != 0 {
+		return nil, fmt.Errorf("domain listing failed with code %d: %s", results.Code, results.Desc)
+	}
 	return results.Data.Results, nil
 }

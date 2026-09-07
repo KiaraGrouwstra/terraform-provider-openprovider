@@ -579,8 +579,29 @@ func (r *DomainResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	if domain == nil {
-		// Domain not found - remove from state
-		resp.State.RemoveResource(ctx)
+		// The listing lags the registry: a domain just registered is not in it
+		// yet, and a listing under load has come back empty for a held name.
+		// Dropping the domain from state on that alone has the next apply buy
+		// it again. So the absence is confirmed by the availability check,
+		// which asks the registry: a name that is free is gone from the
+		// account and leaves the state; a name that is taken stays, as the
+		// state last read it, until a listing shows it again.
+		free, err := domainIsFree(r.client, domainName)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error Reading Domain",
+				fmt.Sprintf("Could not confirm that domain %s left the account, as the listing does not show it: %s", domainName, err.Error()),
+			)
+			return
+		}
+		if free {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddWarning(
+			"Domain Not Listed",
+			fmt.Sprintf("The account's listing does not show domain %s, but the registry says it is taken, so its state is kept as last read.", domainName),
+		)
 		return
 	}
 
@@ -819,6 +840,24 @@ func (r *DomainResource) ImportState(ctx context.Context, req resource.ImportSta
 		"Auth Code Required for Transferred Domains",
 		"If this domain was transferred to OpenProvider, the authorization code cannot be retrieved from the API. You must provide the auth_code in your Terraform configuration after import, or the resource will show a diff on the next plan.",
 	)
+}
+
+// domainIsFree asks the registry, through the availability check, whether
+// nobody holds the domain: the one answer the account's listing cannot lag on.
+func domainIsFree(c *client.Client, domainName string) (bool, error) {
+	name, extension, found := strings.Cut(domainName, ".")
+	if !found || name == "" || extension == "" {
+		return false, fmt.Errorf("domain %q is not a name and an extension", domainName)
+	}
+	results, err := domains.Check(c, []domains.CheckDomain{{Name: name, Extension: extension}})
+	if err != nil {
+		return false, err
+	}
+	// One name asked, one answer: the check data source reads it the same way.
+	if len(results) == 0 {
+		return false, fmt.Errorf("the availability check did not answer for %s", domainName)
+	}
+	return results[0].Status == "free", nil
 }
 
 // getDomainByName finds a domain by its name using the List API.
