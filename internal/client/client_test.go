@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 type mockAuthTransport struct {
@@ -127,4 +128,124 @@ func TestNewClient(t *testing.T) {
 			t.Errorf("Expected token to be updated to 'new-token', got '%s'", client.Token)
 		}
 	})
+}
+
+// flakyTransport answers the first `failures` calls with `status` and every
+// later one with 200, and records each body it was sent.
+type flakyTransport struct {
+	failures int
+	status   int
+	calls    int
+	bodies   []string
+}
+
+func (f *flakyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	f.calls++
+	body := ""
+	if req.Body != nil {
+		b, _ := io.ReadAll(req.Body)
+		body = string(b)
+	}
+	f.bodies = append(f.bodies, body)
+	status := http.StatusOK
+	if f.calls <= f.failures {
+		status = f.status
+	}
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(`{}`)),
+		Header:     make(http.Header),
+	}, nil
+}
+
+func TestDoRepeatsAGatewayError(t *testing.T) {
+	retryBase = 0
+
+	t.Run("a GET answered by a 502 is sent again", func(t *testing.T) {
+		transport := &flakyTransport{failures: 2, status: http.StatusBadGateway}
+		client := NewClient(Config{Token: "token", HTTPClient: &http.Client{Transport: transport}})
+		req, _ := http.NewRequest("GET", client.BaseURL+"/v1beta/domains", nil)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Expected the third call to answer, got %v", err)
+		}
+		resp.Body.Close()
+		if transport.calls != 3 {
+			t.Errorf("Expected 3 calls, got %d", transport.calls)
+		}
+	})
+
+	t.Run("a PUT is sent again with its body", func(t *testing.T) {
+		transport := &flakyTransport{failures: 1, status: http.StatusServiceUnavailable}
+		client := NewClient(Config{Token: "token", HTTPClient: &http.Client{Transport: transport}})
+		req, _ := http.NewRequest("PUT", client.BaseURL+"/v1beta/domains/1", strings.NewReader(`{"a":1}`))
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Expected the second call to answer, got %v", err)
+		}
+		resp.Body.Close()
+		if len(transport.bodies) != 2 || transport.bodies[0] != `{"a":1}` || transport.bodies[1] != `{"a":1}` {
+			t.Errorf("Expected the body on both calls, got %q", transport.bodies)
+		}
+	})
+
+	t.Run("a POST answered by a 502 is not sent again", func(t *testing.T) {
+		transport := &flakyTransport{failures: 1, status: http.StatusBadGateway}
+		client := NewClient(Config{Token: "token", HTTPClient: &http.Client{Transport: transport}})
+		req, _ := http.NewRequest("POST", client.BaseURL+"/v1beta/domains", strings.NewReader(`{}`))
+
+		if _, err := client.Do(req); err == nil {
+			t.Fatal("Expected the 502 to be an error")
+		}
+		if transport.calls != 1 {
+			t.Errorf("Expected 1 call, got %d", transport.calls)
+		}
+	})
+
+	t.Run("a GET that keeps failing is given up after the attempts", func(t *testing.T) {
+		transport := &flakyTransport{failures: 10, status: http.StatusGatewayTimeout}
+		client := NewClient(Config{Token: "token", HTTPClient: &http.Client{Transport: transport}})
+		req, _ := http.NewRequest("GET", client.BaseURL+"/v1beta/domains", nil)
+
+		if _, err := client.Do(req); err == nil {
+			t.Fatal("Expected the last 504 to be an error")
+		}
+		if transport.calls != retryAttempts {
+			t.Errorf("Expected %d calls, got %d", retryAttempts, transport.calls)
+		}
+	})
+
+	t.Run("a 500 is not sent again", func(t *testing.T) {
+		transport := &flakyTransport{failures: 1, status: http.StatusInternalServerError}
+		client := NewClient(Config{Token: "token", HTTPClient: &http.Client{Transport: transport}})
+		req, _ := http.NewRequest("GET", client.BaseURL+"/v1beta/domains", nil)
+
+		if _, err := client.Do(req); err == nil {
+			t.Fatal("Expected the 500 to be an error")
+		}
+		if transport.calls != 1 {
+			t.Errorf("Expected 1 call, got %d", transport.calls)
+		}
+	})
+}
+
+func TestRetryDelay(t *testing.T) {
+	retryBase = time.Second
+
+	if got := retryDelay(3, nil); got != 4*time.Second {
+		t.Errorf("Expected the third pause to be 4s, got %v", got)
+	}
+
+	resp := &http.Response{Header: make(http.Header)}
+	resp.Header.Set("Retry-After", "7")
+	if got := retryDelay(1, resp); got != 7*time.Second {
+		t.Errorf("Expected the header's 7s, got %v", got)
+	}
+
+	resp.Header.Set("Retry-After", "600")
+	if got := retryDelay(1, resp); got != retryCap {
+		t.Errorf("Expected the cap %v, got %v", retryCap, got)
+	}
 }

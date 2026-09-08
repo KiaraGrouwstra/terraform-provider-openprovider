@@ -2,9 +2,11 @@
 package client
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,7 +16,17 @@ import (
 const (
 	// DefaultBaseURL -- root url for openprovider api
 	DefaultBaseURL = "https://api.openprovider.eu"
+
+	// A request the gateway answers with a 5xx, or does not answer at all,
+	// is sent again this many times in total.
+	retryAttempts = 4
+	// The longest pause a `Retry-After` header can ask for.
+	retryCap = 30 * time.Second
 )
+
+// The pause before the first repeat; it doubles on each further one. A
+// variable so the tests can shorten it.
+var retryBase = time.Second
 
 // Config represents the configuration settings for a client, including the base API URL and an optional HTTP client.
 type Config struct {
@@ -63,7 +75,11 @@ func NewClient(config Config) *Client {
 	}
 }
 
-// Do executes a request and returns the response. It handles authentication and retries once if the token is expired.
+// Do executes a request and returns the response. It handles authentication
+// and retries once if the token is expired. A request the gateway answers
+// with a 429, 502, 503 or 504, or does not answer at all, is repeated after
+// a pause when its method allows: a `POST` that got a gateway error may have
+// been handled, and a repeat could order twice.
 func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	if c.Token == "" && c.Username != "" && c.Password != "" {
 		token, err := authentication.Login(c.HTTPClient, c.BaseURL, "", c.Username, c.Password)
@@ -78,20 +94,33 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.Token))
 	}
 
-	resp, err := c.HTTPClient.Do(req)
-	if err == nil && resp.StatusCode == http.StatusUnauthorized && c.Username != "" && c.Password != "" {
-		// Try to login and retry the request
-		token, err := authentication.Login(c.HTTPClient, c.BaseURL, "", c.Username, c.Password)
-		if err != nil {
-			return nil, fmt.Errorf("authentication failed: %w", err)
-		}
-		c.Token = *token
+	var resp *http.Response
+	var err error
+	for attempt := 1; ; attempt++ {
+		resp, err = c.send(req)
+		if err == nil && resp.StatusCode == http.StatusUnauthorized && c.Username != "" && c.Password != "" {
+			resp.Body.Close()
+			// Try to login and retry the request
+			token, loginErr := authentication.Login(c.HTTPClient, c.BaseURL, "", c.Username, c.Password)
+			if loginErr != nil {
+				return nil, fmt.Errorf("authentication failed: %w", loginErr)
+			}
+			c.Token = *token
 
-		// Update Authorization header and retry
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.Token))
-		resp, err = c.HTTPClient.Do(req)
-		if err != nil {
-			return nil, err
+			// Update Authorization header and retry
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.Token))
+			resp, err = c.send(req)
+		}
+
+		if attempt == retryAttempts || !transient(resp, err) || !repeatable(req) {
+			break
+		}
+		delay := retryDelay(attempt, resp)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		if waitErr := wait(req.Context(), delay); waitErr != nil {
+			return nil, waitErr
 		}
 	}
 
@@ -108,4 +137,65 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	}
 
 	return resp, nil
+}
+
+// send sends the request once. A body the request carries is rewound
+// first, so a repeat sends it again instead of the consumed reader.
+func (c *Client) send(req *http.Request) (*http.Response, error) {
+	if req.GetBody != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		req.Body = body
+	}
+	return c.HTTPClient.Do(req)
+}
+
+// transient reports whether the answer is one the API did not give: a
+// transport error, a rate limit, or a gateway error.
+func transient(resp *http.Response, err error) bool {
+	if err != nil {
+		return true
+	}
+	switch resp.StatusCode {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// repeatable reports whether the request can be sent again without a
+// second effect: an idempotent method, and a body that can be rewound.
+func repeatable(req *http.Request) bool {
+	switch req.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPut, http.MethodDelete:
+	default:
+		return false
+	}
+	return req.Body == nil || req.GetBody != nil
+}
+
+// retryDelay is the pause before the repeat after the given attempt: what a
+// `Retry-After` header asks for, up to `retryCap`, else `retryBase` doubled
+// per attempt.
+func retryDelay(attempt int, resp *http.Response) time.Duration {
+	if resp != nil {
+		if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && seconds >= 0 {
+			return min(time.Duration(seconds)*time.Second, retryCap)
+		}
+	}
+	return retryBase << (attempt - 1)
+}
+
+// wait pauses for the delay, or until the request's context ends.
+func wait(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
