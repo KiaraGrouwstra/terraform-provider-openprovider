@@ -683,13 +683,7 @@ func (r *DomainResource) Update(ctx context.Context, req resource.UpdateRequest,
 	// change detection prevents redundant API calls for resources with computed fields that
 	// can be updated by the API independently.
 	if !hasChanges {
-		var readReq resource.ReadRequest
-		readReq.State = resp.State
-		var readResp resource.ReadResponse
-		readResp.State = resp.State
-		r.Read(ctx, readReq, &readResp)
-		resp.State = readResp.State
-		resp.Diagnostics.Append(readResp.Diagnostics...)
+		r.refreshAfterUpdate(ctx, plan, resp)
 		return
 	}
 
@@ -762,7 +756,18 @@ func (r *DomainResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	// Call Read to refresh the state
+	r.refreshAfterUpdate(ctx, plan, resp)
+}
+
+// refreshAfterUpdate reads the domain back into `resp.State` the way `Read`
+// reads it, then carries the order fields over from the plan. The read starts
+// from the prior state, and the API has no record of `period`, `max_cost` or
+// `currency`: they describe the order, not the domain. Without the carry an
+// update leaves them at whatever the prior state held -- null after an
+// import -- and the framework rejects the result as inconsistent with the
+// plan. This holds whether or not the update sent a request: an update with
+// nothing to send still ends in this refresh.
+func (r *DomainResource) refreshAfterUpdate(ctx context.Context, plan DomainModel, resp *resource.UpdateResponse) {
 	var readReq resource.ReadRequest
 	readReq.State = resp.State
 	var readResp resource.ReadResponse
@@ -773,11 +778,13 @@ func (r *DomainResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	// The read starts from the prior state, and the API has no record of
-	// `period`, `max_cost` or `currency`: they describe the order, not the
-	// domain. Carry them over from the plan, or an update leaves them at
-	// whatever the prior state held -- null after an import -- and the
-	// framework rejects the result as inconsistent with the plan.
+	// A domain the read no longer finds has left the state; there is nothing
+	// to carry the order fields into.
+	if readResp.State.Raw.IsNull() {
+		resp.State = readResp.State
+		return
+	}
+
 	var final DomainModel
 	resp.Diagnostics.Append(readResp.State.Get(ctx, &final)...)
 	if resp.Diagnostics.HasError() {
