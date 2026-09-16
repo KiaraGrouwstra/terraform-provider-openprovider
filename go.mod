@@ -1,6 +1,6 @@
 module github.com/charpand/terraform-provider-openprovider
 
-go 1.26.0
+go 1.27.0
 
 require github.com/hashicorp/terraform-plugin-framework v1.19.0
 
