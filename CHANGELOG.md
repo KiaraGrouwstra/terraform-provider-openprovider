@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated various Go dependencies and GitHub Actions to their latest versions
 - Consolidated AI agent documentation into `AGENTS.md` and removed duplication across `CLAUDE.md` and GitHub Copilot instructions
 - Improved repository maintenance by removing obsolete agent configurations
+- Made `CLAUDE.md` the canonical AI agent instructions doc; `AGENTS.md`, `.github/copilot-instructions.md`, and `.github/agents/coding-agent.md` now reference it instead of duplicating (or symlinking) content
 
 ### Fixed
 - `openprovider_domain`: the request timeout is now long enough for a registration to complete, a failed request reports the API's reason instead of a bare status, an update no longer drops the order fields (`period`, `max_cost`, `currency`), and a plan with `dnssec_keys` left unstated no longer reports a change on every run
