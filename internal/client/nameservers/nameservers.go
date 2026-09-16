@@ -42,6 +42,12 @@ var ErrNotFound = fmt.Errorf("nameserver not found")
 func do(c *client.Client, req *http.Request) (json.RawMessage, error) {
 	resp, err := c.Do(req)
 	if err != nil {
+		// `client.Client.Do` turns any non-2xx status into an error and closes
+		// the body before returning, so a 404 is told apart here, from the
+		// status alone, rather than from a body that is no longer there to read.
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
 
@@ -59,21 +65,15 @@ func do(c *client.Client, req *http.Request) (json.RawMessage, error) {
 		return nil, fmt.Errorf("could not read the reply (status %d): %w", resp.StatusCode, err)
 	}
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-
-	// A non-zero `code` is an API error even when the status is 200, so both
-	// halves are checked. Openprovider reports a missing object as code 399.
+	// A non-zero `code` is an API error even on a 2xx status, so it is
+	// checked on its own. Openprovider reports a missing object as code 399.
+	// `resp.StatusCode` is 2xx whenever `err` is nil, so no status check is
+	// needed below this point.
 	if envelope.Code != 0 {
 		if envelope.Code == 399 {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("openprovider error %d: %s", envelope.Code, envelope.Desc)
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("openprovider returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	return envelope.Data, nil
