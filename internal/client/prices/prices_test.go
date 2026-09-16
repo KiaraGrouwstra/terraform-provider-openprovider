@@ -39,7 +39,7 @@ func TestCreateReadsTheQuote(t *testing.T) {
 }
 
 func TestCreateFallsBackToProductPriceForANonMember(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"code":0,"data":{"is_premium":false,"price":{` +
 			`"product":{"currency":"EUR","price":15},` +
@@ -58,7 +58,7 @@ func TestCreateFallsBackToProductPriceForANonMember(t *testing.T) {
 }
 
 func TestCreateReportsAnAPIError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"code":300,"desc":"Your domain request contains an empty domain name"}`))
 	}))

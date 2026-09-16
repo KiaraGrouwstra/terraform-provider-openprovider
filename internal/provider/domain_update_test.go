@@ -36,7 +36,7 @@ func listingOf(t *testing.T, name, extension string) *httptest.Server {
 
 // stateOf builds a state or plan of the domain resource's schema from a
 // model, the way the framework hands one to `Update`.
-func stateOf(t *testing.T, ctx context.Context, r *DomainResource, m DomainModel) tfsdk.State {
+func stateOf(ctx context.Context, t *testing.T, r *DomainResource, m DomainModel) tfsdk.State {
 	t.Helper()
 	var schemaResp resource.SchemaResponse
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
@@ -85,10 +85,10 @@ func TestDomainResourceUpdateKeepsOrderFields(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			plan := ordered
 			plan.Autorenew = types.BoolValue(autorenew)
-			priorState := stateOf(t, ctx, r, prior)
+			priorState := stateOf(ctx, t, r, prior)
 			resp := resource.UpdateResponse{State: priorState}
 			r.Update(ctx, resource.UpdateRequest{
-				Plan:  tfsdk.Plan{Schema: priorState.Schema, Raw: stateOf(t, ctx, r, plan).Raw},
+				Plan:  tfsdk.Plan{Schema: priorState.Schema, Raw: stateOf(ctx, t, r, plan).Raw},
 				State: priorState,
 			}, &resp)
 			if resp.Diagnostics.HasError() {

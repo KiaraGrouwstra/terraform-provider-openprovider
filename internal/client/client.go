@@ -103,7 +103,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		// The body carries the API's reason (`{"desc":...,"code":...}`);
 		// without it a refusal reads as a bare status.
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return resp, fmt.Errorf("api error: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 

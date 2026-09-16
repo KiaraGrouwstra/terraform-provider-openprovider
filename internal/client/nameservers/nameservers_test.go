@@ -37,7 +37,7 @@ func TestGetReadsANameserver(t *testing.T) {
 }
 
 func TestGetReportsErrNotFoundOn404(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
@@ -48,7 +48,7 @@ func TestGetReportsErrNotFoundOn404(t *testing.T) {
 }
 
 func TestGetReportsErrNotFoundOnCode399(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"code":399,"desc":"Nameserver not found"}`))
 	}))
@@ -60,7 +60,7 @@ func TestGetReportsErrNotFoundOnCode399(t *testing.T) {
 }
 
 func TestGetReportsErrNotFoundOnAnEmptyObject(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"code":0,"data":{}}`))
 	}))
@@ -72,7 +72,7 @@ func TestGetReportsErrNotFoundOnAnEmptyObject(t *testing.T) {
 }
 
 func TestGetReportsAnAPIError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"code":61,"desc":"Authentication failure"}`))
 	}))
@@ -126,7 +126,7 @@ func TestUpdatePutsToTheHostPath(t *testing.T) {
 }
 
 func TestDeleteIsNotAnErrorWhenAlreadyGone(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
@@ -137,7 +137,7 @@ func TestDeleteIsNotAnErrorWhenAlreadyGone(t *testing.T) {
 }
 
 func TestDeleteReportsAnOtherError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"code":61,"desc":"Authentication failure"}`))
 	}))

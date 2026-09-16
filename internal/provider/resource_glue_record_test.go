@@ -25,7 +25,7 @@ func glueRecordResource(server *httptest.Server) *GlueRecordResource {
 
 // glueRecordStateOf builds a plan or state of the resource's schema from a
 // model, the way the framework hands one to Create/Update/Delete.
-func glueRecordStateOf(t *testing.T, ctx context.Context, r *GlueRecordResource, m GlueRecordModel) tfsdk.State {
+func glueRecordStateOf(ctx context.Context, t *testing.T, r *GlueRecordResource, m GlueRecordModel) tfsdk.State {
 	t.Helper()
 	var schemaResp resource.SchemaResponse
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
@@ -42,7 +42,7 @@ func glueRecordStateOf(t *testing.T, ctx context.Context, r *GlueRecordResource,
 	return state
 }
 
-func ipsOf(t *testing.T, ctx context.Context, values ...string) types.Set {
+func ipsOf(ctx context.Context, t *testing.T, values ...string) types.Set {
 	t.Helper()
 	set, diags := types.SetValueFrom(ctx, types.StringType, values)
 	if diags.HasError() {
@@ -71,10 +71,10 @@ func TestGlueRecordCreatePublishesTheAddresses(t *testing.T) {
 	plan := GlueRecordModel{
 		Domain:    types.StringValue("example.com"),
 		Subdomain: types.StringValue("ns1"),
-		IPs:       ipsOf(t, ctx, "192.0.2.1", "2001:db8::1"),
+		IPs:       ipsOf(ctx, t, "192.0.2.1", "2001:db8::1"),
 	}
-	resp := &resource.CreateResponse{State: glueRecordStateOf(t, ctx, res, plan)}
-	res.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: resp.State.Schema, Raw: glueRecordStateOf(t, ctx, res, plan).Raw}}, resp)
+	resp := &resource.CreateResponse{State: glueRecordStateOf(ctx, t, res, plan)}
+	res.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: resp.State.Schema, Raw: glueRecordStateOf(ctx, t, res, plan).Raw}}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("create: %v", resp.Diagnostics)
 	}
@@ -93,7 +93,7 @@ func TestGlueRecordCreatePublishesTheAddresses(t *testing.T) {
 
 func TestGlueRecordCreateRefusesTwoIPv4Addresses(t *testing.T) {
 	ctx := context.Background()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		t.Errorf("expected no request, got %s %s", r.Method, r.URL.Path)
 	}))
 	defer server.Close()
@@ -102,10 +102,10 @@ func TestGlueRecordCreateRefusesTwoIPv4Addresses(t *testing.T) {
 	plan := GlueRecordModel{
 		Domain:    types.StringValue("example.com"),
 		Subdomain: types.StringValue("ns1"),
-		IPs:       ipsOf(t, ctx, "192.0.2.1", "192.0.2.2"),
+		IPs:       ipsOf(ctx, t, "192.0.2.1", "192.0.2.2"),
 	}
-	resp := &resource.CreateResponse{State: glueRecordStateOf(t, ctx, res, plan)}
-	res.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: resp.State.Schema, Raw: glueRecordStateOf(t, ctx, res, plan).Raw}}, resp)
+	resp := &resource.CreateResponse{State: glueRecordStateOf(ctx, t, res, plan)}
+	res.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: resp.State.Schema, Raw: glueRecordStateOf(ctx, t, res, plan).Raw}}, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected two IPv4 addresses to be refused")
 	}
@@ -113,7 +113,7 @@ func TestGlueRecordCreateRefusesTwoIPv4Addresses(t *testing.T) {
 
 func TestGlueRecordCreateRefusesNoAddresses(t *testing.T) {
 	ctx := context.Background()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		t.Errorf("expected no request, got %s %s", r.Method, r.URL.Path)
 	}))
 	defer server.Close()
@@ -122,10 +122,10 @@ func TestGlueRecordCreateRefusesNoAddresses(t *testing.T) {
 	plan := GlueRecordModel{
 		Domain:    types.StringValue("example.com"),
 		Subdomain: types.StringValue("ns1"),
-		IPs:       ipsOf(t, ctx),
+		IPs:       ipsOf(ctx, t),
 	}
-	resp := &resource.CreateResponse{State: glueRecordStateOf(t, ctx, res, plan)}
-	res.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: resp.State.Schema, Raw: glueRecordStateOf(t, ctx, res, plan).Raw}}, resp)
+	resp := &resource.CreateResponse{State: glueRecordStateOf(ctx, t, res, plan)}
+	res.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: resp.State.Schema, Raw: glueRecordStateOf(ctx, t, res, plan).Raw}}, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected a glue record with no addresses to be refused")
 	}
@@ -133,7 +133,7 @@ func TestGlueRecordCreateRefusesNoAddresses(t *testing.T) {
 
 func TestGlueRecordReadRemovesAMissingRecord(t *testing.T) {
 	ctx := context.Background()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
@@ -143,9 +143,9 @@ func TestGlueRecordReadRemovesAMissingRecord(t *testing.T) {
 		ID:        types.StringValue("ns1.example.com"),
 		Domain:    types.StringValue("example.com"),
 		Subdomain: types.StringValue("ns1"),
-		IPs:       ipsOf(t, ctx, "192.0.2.1"),
+		IPs:       ipsOf(ctx, t, "192.0.2.1"),
 	}
-	priorState := glueRecordStateOf(t, ctx, res, state)
+	priorState := glueRecordStateOf(ctx, t, res, state)
 	resp := &resource.ReadResponse{State: priorState}
 	res.Read(ctx, resource.ReadRequest{State: priorState}, resp)
 	if resp.Diagnostics.HasError() {
@@ -174,9 +174,9 @@ func TestGlueRecordReadRefreshesTheAddresses(t *testing.T) {
 		ID:        types.StringValue("ns1.example.com"),
 		Domain:    types.StringValue("example.com"),
 		Subdomain: types.StringValue("ns1"),
-		IPs:       ipsOf(t, ctx, "192.0.2.1"),
+		IPs:       ipsOf(ctx, t, "192.0.2.1"),
 	}
-	priorState := glueRecordStateOf(t, ctx, res, state)
+	priorState := glueRecordStateOf(ctx, t, res, state)
 	resp := &resource.ReadResponse{State: priorState}
 	res.Read(ctx, resource.ReadRequest{State: priorState}, resp)
 	if resp.Diagnostics.HasError() {
@@ -213,9 +213,9 @@ func TestGlueRecordDeleteWithdrawsTheRecord(t *testing.T) {
 		ID:        types.StringValue("ns1.example.com"),
 		Domain:    types.StringValue("example.com"),
 		Subdomain: types.StringValue("ns1"),
-		IPs:       ipsOf(t, ctx, "192.0.2.1"),
+		IPs:       ipsOf(ctx, t, "192.0.2.1"),
 	}
-	priorState := glueRecordStateOf(t, ctx, res, state)
+	priorState := glueRecordStateOf(ctx, t, res, state)
 	resp := &resource.DeleteResponse{}
 	res.Delete(ctx, resource.DeleteRequest{State: priorState}, resp)
 	if resp.Diagnostics.HasError() {
@@ -228,7 +228,7 @@ func TestGlueRecordDeleteWithdrawsTheRecord(t *testing.T) {
 
 func TestGlueRecordDeleteIsANoOpWhenAlreadyGone(t *testing.T) {
 	ctx := context.Background()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
@@ -238,9 +238,9 @@ func TestGlueRecordDeleteIsANoOpWhenAlreadyGone(t *testing.T) {
 		ID:        types.StringValue("ns1.example.com"),
 		Domain:    types.StringValue("example.com"),
 		Subdomain: types.StringValue("ns1"),
-		IPs:       ipsOf(t, ctx, "192.0.2.1"),
+		IPs:       ipsOf(ctx, t, "192.0.2.1"),
 	}
-	priorState := glueRecordStateOf(t, ctx, res, state)
+	priorState := glueRecordStateOf(ctx, t, res, state)
 	resp := &resource.DeleteResponse{}
 	res.Delete(ctx, resource.DeleteRequest{State: priorState}, resp)
 	if resp.Diagnostics.HasError() {
@@ -250,7 +250,7 @@ func TestGlueRecordDeleteIsANoOpWhenAlreadyGone(t *testing.T) {
 
 func TestGlueRecordImportStateSplitsTheHostName(t *testing.T) {
 	ctx := context.Background()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		t.Errorf("expected no request, got %s %s", r.Method, r.URL.Path)
 	}))
 	defer server.Close()

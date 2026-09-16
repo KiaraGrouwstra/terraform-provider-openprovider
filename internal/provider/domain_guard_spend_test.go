@@ -22,7 +22,7 @@ func priceAPI(t *testing.T, price float64, currency string) *httptest.Server {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"code":0,"data":{"is_premium":false,"price":{`+
+		_, _ = fmt.Fprintf(w, `{"code":0,"data":{"is_premium":false,"price":{`+
 			`"product":{"currency":%q,"price":%v},`+
 			`"reseller":{"currency":%q,"price":%v}`+
 			`}}}`, currency, price, currency, price)
@@ -123,7 +123,7 @@ func TestGuardSpendRefusesAZeroQuote(t *testing.T) {
 }
 
 func TestGuardSpendRefusesOnATransportError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
