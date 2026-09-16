@@ -45,3 +45,21 @@ type DomainCheckModel struct {
 	IsPremium types.Bool   `tfsdk:"is_premium"`
 	Reason    types.String `tfsdk:"reason"`
 }
+
+// DomainsModel describes the data source data model for a domain listing.
+type DomainsModel struct {
+	ID       types.String        `tfsdk:"id"`
+	FullName types.String        `tfsdk:"full_name"`
+	Domains  []DomainsEntryModel `tfsdk:"domains"`
+}
+
+// DomainsEntryModel is one domain in a listing.
+type DomainsEntryModel struct {
+	ID             types.Int64  `tfsdk:"id"`
+	Domain         types.String `tfsdk:"domain"`
+	Status         types.String `tfsdk:"status"`
+	OwnerHandle    types.String `tfsdk:"owner_handle"`
+	NSGroup        types.String `tfsdk:"ns_group"`
+	Autorenew      types.Bool   `tfsdk:"autorenew"`
+	ExpirationDate types.String `tfsdk:"expiration_date"`
+}
