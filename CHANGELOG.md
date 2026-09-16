@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `max_cost` and `currency` on `openprovider_domain`: a registration or transfer is quoted before it is ordered, and the apply fails without spending where the quote exceeds the bound
 - `mise.toml` for local tool version management
 - `CLAUDE.md` with project-specific development guidelines
 
@@ -20,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved repository maintenance by removing obsolete agent configurations
 
 ### Fixed
+- `openprovider_domain`: the request timeout is now long enough for a registration to complete, a failed request reports the API's reason instead of a bare status, an update no longer drops the order fields (`period`, `max_cost`, `currency`), and a plan with `dnssec_keys` left unstated no longer reports a change on every run
 - Resolved `go get -u all` failure by fixing `mergo` module path conflict
 - Resolved `openpgp: key expired` error in documentation workflow by explicitly setting up Terraform
 
