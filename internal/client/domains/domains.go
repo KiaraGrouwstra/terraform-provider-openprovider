@@ -65,17 +65,45 @@ type ListDomainsResponse struct {
 	} `json:"data"`
 }
 
-// List retrieves a list of domains from the Openprovider API.
+// listPageSize is how many domains one request asks for while List pages
+// through an account. The API's own default page is far smaller than many
+// accounts' domain count, so listing everything must ask more than once.
+// A var, as client.retryBase is, so the tests can shrink it.
+var listPageSize = 100
+
+// List retrieves every domain from the Openprovider API, paging through the
+// account's full listing rather than handing back only the API's first page.
 func List(c *client.Client) ([]Domain, error) {
-	path := "/v1beta/domains"
+	all := make([]Domain, 0)
+	offset := 0
+	for {
+		page, total, err := listPage(c, listPageSize, offset)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, page...)
+		offset += len(page)
+		// An empty page stops the loop even if total disagrees, so a bad or
+		// missing total can't spin this forever.
+		if len(page) == 0 || offset >= total {
+			break
+		}
+	}
+	return all, nil
+}
+
+// listPage asks for one page of at most limit domains, starting at offset,
+// and returns it along with the account's total count.
+func listPage(c *client.Client, limit, offset int) ([]Domain, int, error) {
+	path := fmt.Sprintf("/v1beta/domains?limit=%d&offset=%d", limit, offset)
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s%s", c.BaseURL, path), nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	resp, err := c.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	defer func() {
@@ -84,7 +112,7 @@ func List(c *client.Client) ([]Domain, error) {
 
 	var results ListDomainsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return results.Data.Results, nil
+	return results.Data.Results, results.Data.Total, nil
 }
