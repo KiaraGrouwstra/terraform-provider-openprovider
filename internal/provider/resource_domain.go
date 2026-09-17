@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strings"
 
 	"github.com/charpand/terraform-provider-openprovider/internal/client"
 	"github.com/charpand/terraform-provider-openprovider/internal/client/domains"
@@ -368,19 +367,18 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	// Parse domain name into name and extension
+	// Parse domain name into name and extension. The split is on the first
+	// dot, matching the API's own extension field: "example.co.uk" is name
+	// "example", extension "co.uk", not name "example.co", extension "uk".
 	domainName := plan.Domain.ValueString()
-	parts := strings.Split(domainName, ".")
-	if len(parts) < 2 {
+	name, extension, ok := domains.SplitFullName(domainName)
+	if !ok {
 		resp.Diagnostics.AddError(
 			"Invalid Domain Domain",
 			fmt.Sprintf("Domain name must include extension (e.g., example.com), got: %s", domainName),
 		)
 		return
 	}
-
-	name := strings.Join(parts[:len(parts)-1], ".")
-	extension := parts[len(parts)-1]
 
 	var domain *domains.Domain
 	var err error
@@ -845,19 +843,11 @@ func (r *DomainResource) ImportState(ctx context.Context, req resource.ImportSta
 // domainIsFree asks the registry, through the availability check, whether
 // nobody holds the domain: the one answer the account's listing cannot lag on.
 func domainIsFree(c *client.Client, domainName string) (bool, error) {
-	name, extension, found := strings.Cut(domainName, ".")
-	if !found || name == "" || extension == "" {
-		return false, fmt.Errorf("domain %q is not a name and an extension", domainName)
-	}
-	results, err := domains.Check(c, []domains.CheckDomain{{Name: name, Extension: extension}})
+	result, err := domains.CheckOne(c, domainName)
 	if err != nil {
 		return false, err
 	}
-	// One name asked, one answer: the check data source reads it the same way.
-	if len(results) == 0 {
-		return false, fmt.Errorf("the availability check did not answer for %s", domainName)
-	}
-	return results[0].Status == "free", nil
+	return result.Status == "free", nil
 }
 
 // getDomainByName finds a domain by its name using the List API.

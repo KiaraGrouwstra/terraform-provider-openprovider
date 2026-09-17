@@ -2,6 +2,8 @@
 package domains
 
 import (
+	"strings"
+
 	"github.com/charpand/terraform-provider-openprovider/internal/client"
 )
 
@@ -65,4 +67,19 @@ type ListDomainsResponse struct {
 // List retrieves a list of domains from the Openprovider API.
 func List(c *client.Client) ([]Domain, error) {
 	return ListWith(c, ListOptions{})
+}
+
+// SplitFullName splits a domain's full name into the name and extension the
+// API's `domain` object carries as separate fields. The split is on the
+// first dot, not the last: OpenProvider treats a second-level country
+// suffix (`co.uk`, `com.au`, and the like) as one extension, so
+// "example.co.uk" is name "example", extension "co.uk", not name
+// "example.co", extension "uk". ok is false when domainName has no dot to
+// split on, or nothing on one side of it.
+func SplitFullName(domainName string) (name, extension string, ok bool) {
+	name, extension, found := strings.Cut(domainName, ".")
+	if !found || name == "" || extension == "" {
+		return "", "", false
+	}
+	return name, extension, true
 }
