@@ -56,14 +56,15 @@ func Check(c *client.Client, domainsToCheck []CheckDomain) ([]CheckResult, error
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := c.Do(httpReq)
-	if resp != nil {
-		defer func() {
-			_ = resp.Body.Close()
-		}()
-	}
 	if err != nil {
+		// A non-2xx response comes back here as both a non-nil resp (its
+		// body already read and closed by Do) and a non-nil err, so the
+		// close below only runs once the body is still open to close.
 		return nil, err
 	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	var result CheckDomainsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
