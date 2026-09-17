@@ -159,7 +159,9 @@ func (f *flakyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func TestDoRepeatsAGatewayError(t *testing.T) {
+	old := retryBase
 	retryBase = 0
+	t.Cleanup(func() { retryBase = old })
 
 	t.Run("a GET answered by a 502 is sent again", func(t *testing.T) {
 		transport := &flakyTransport{failures: 2, status: http.StatusBadGateway}
@@ -232,20 +234,36 @@ func TestDoRepeatsAGatewayError(t *testing.T) {
 }
 
 func TestRetryDelay(t *testing.T) {
+	old := retryBase
 	retryBase = time.Second
+	t.Cleanup(func() { retryBase = old })
 
-	if got := retryDelay(3, nil); got != 4*time.Second {
+	// Truncated to the second, so formatting it as an HTTP-date and parsing
+	// it back loses nothing the comparisons below would notice.
+	now := time.Now().Truncate(time.Second)
+
+	if got := retryDelay(3, nil, now); got != 4*time.Second {
 		t.Errorf("Expected the third pause to be 4s, got %v", got)
 	}
 
 	resp := &http.Response{Header: make(http.Header)}
 	resp.Header.Set("Retry-After", "7")
-	if got := retryDelay(1, resp); got != 7*time.Second {
+	if got := retryDelay(1, resp, now); got != 7*time.Second {
 		t.Errorf("Expected the header's 7s, got %v", got)
 	}
 
 	resp.Header.Set("Retry-After", "600")
-	if got := retryDelay(1, resp); got != retryCap {
+	if got := retryDelay(1, resp, now); got != retryCap {
 		t.Errorf("Expected the cap %v, got %v", retryCap, got)
+	}
+
+	resp.Header.Set("Retry-After", now.Add(5*time.Second).UTC().Format(http.TimeFormat))
+	if got := retryDelay(1, resp, now); got != 5*time.Second {
+		t.Errorf("Expected the header's date 5s ahead, got %v", got)
+	}
+
+	resp.Header.Set("Retry-After", now.Add(-5*time.Second).UTC().Format(http.TimeFormat))
+	if got := retryDelay(1, resp, now); got != 0 {
+		t.Errorf("Expected a date already past to mean no extra wait, got %v", got)
 	}
 }

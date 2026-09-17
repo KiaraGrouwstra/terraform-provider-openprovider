@@ -18,7 +18,8 @@ const (
 	DefaultBaseURL = "https://api.openprovider.eu"
 
 	// A request the gateway answers with a 5xx, or does not answer at all,
-	// is sent again this many times in total.
+	// is sent this many times in total before Do gives up on it (so it is
+	// repeated retryAttempts-1 times after the first try).
 	retryAttempts = 4
 	// The longest pause a `Retry-After` header can ask for.
 	retryCap = 30 * time.Second
@@ -115,7 +116,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		if attempt == retryAttempts || !transient(resp, err) || !repeatable(req) {
 			break
 		}
-		delay := retryDelay(attempt, resp)
+		delay := retryDelay(attempt, resp, time.Now())
 		if resp != nil {
 			resp.Body.Close()
 		}
@@ -178,11 +179,23 @@ func repeatable(req *http.Request) bool {
 
 // retryDelay is the pause before the repeat after the given attempt: what a
 // `Retry-After` header asks for, up to `retryCap`, else `retryBase` doubled
-// per attempt.
-func retryDelay(attempt int, resp *http.Response) time.Duration {
+// per attempt. RFC 7231 allows that header as either a number of seconds or
+// an HTTP-date; `now` is what the date is measured against, passed in
+// rather than read from the clock so this stays deterministic to test.
+func retryDelay(attempt int, resp *http.Response, now time.Time) time.Duration {
 	if resp != nil {
-		if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && seconds >= 0 {
-			return min(time.Duration(seconds)*time.Second, retryCap)
+		if raw := resp.Header.Get("Retry-After"); raw != "" {
+			if seconds, err := strconv.Atoi(raw); err == nil && seconds >= 0 {
+				return min(time.Duration(seconds)*time.Second, retryCap)
+			}
+			if when, err := http.ParseTime(raw); err == nil {
+				if until := when.Sub(now); until > 0 {
+					return min(until, retryCap)
+				}
+				// A date already past asks for no extra wait, not the
+				// exponential fallback below.
+				return 0
+			}
 		}
 	}
 	return retryBase << (attempt - 1)
