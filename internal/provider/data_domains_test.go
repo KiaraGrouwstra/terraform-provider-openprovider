@@ -86,8 +86,8 @@ func TestDomainsListsAll(t *testing.T) {
 	if len(state.Domains) != 2 || state.ID.ValueString() != "all" {
 		t.Fatalf("expected both domains under id all, got %+v", state)
 	}
-	if len(queries) != 1 || queries[0] != "" {
-		t.Fatalf("an unfiltered listing should send no query, sent %v", queries)
+	if len(queries) != 1 || queries[0] != "limit=100" {
+		t.Fatalf("an unfiltered listing should page with an explicit limit and no other filter, sent %v", queries)
 	}
 	if !state.Domains[0].Autorenew.ValueBool() || state.Domains[1].Autorenew.ValueBool() {
 		t.Fatalf("autorenew should follow the API's on/off, got %+v", state.Domains)
@@ -102,7 +102,7 @@ func TestDomainsFiltersByFullName(t *testing.T) {
 	if len(state.Domains) != 1 || state.Domains[0].Domain.ValueString() != "example.org" || state.Domains[0].ID.ValueInt64() != 456 {
 		t.Fatalf("expected example.org alone, got %+v", state.Domains)
 	}
-	if len(queries) != 1 || queries[0] != "full_name=example.org" {
+	if len(queries) != 1 || queries[0] != "full_name=example.org&limit=100" {
 		t.Fatalf("a filtered listing should filter on the API's side, sent %v", queries)
 	}
 }
