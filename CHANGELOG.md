@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `openprovider_domain_check` data source: whether a domain is available to register, asked of the registry rather than the account
 - `openprovider_domains` data source: the domains the account holds, optionally filtered to one `full_name`, an empty list where the account does not hold it
 - `full_name` filtering in the domains client, which the domain lookup by name now uses instead of paging through the account
+- `on_destroy` on `openprovider_domain`: a destroy retains the domain at OpenProvider (the default) or deletes it, where it used to fail
 - `mise.toml` for local tool version management
 - `CLAUDE.md` with project-specific development guidelines
 

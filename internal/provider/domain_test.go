@@ -26,7 +26,7 @@ func TestDomainResourceSchema(t *testing.T) {
 		"id", "domain", "auth_code", "status", "autorenew",
 		"owner_handle", "admin_handle", "tech_handle", "billing_handle",
 		"period", "ns_group", "dnssec_keys", "is_dnssec_enabled",
-		"expiration_date",
+		"expiration_date", "on_destroy",
 	}
 	for _, attr := range expectedAttrs {
 		if _, ok := resp.Schema.Attributes[attr]; !ok {
@@ -267,6 +267,29 @@ func TestConvertDnssecKeysToAPIHandlesNull(t *testing.T) {
 				if len(result) > 0 {
 					t.Errorf("Expected empty or nil result for %s, got %v", tc.name, result)
 				}
+			}
+		})
+	}
+}
+
+func TestKnownStringResolvesUnknown(t *testing.T) {
+	cases := []struct {
+		name    string
+		fromAPI string
+		planned types.String
+		want    types.String
+	}{
+		{"api value wins over unknown", "AB123456-EU", types.StringUnknown(), types.StringValue("AB123456-EU")},
+		{"api value wins over null", "AB123456-EU", types.StringNull(), types.StringValue("AB123456-EU")},
+		{"api value wins over a planned value", "AB123456-EU", types.StringValue("CD654321-EU"), types.StringValue("AB123456-EU")},
+		{"no api value keeps a planned value", "", types.StringValue("CD654321-EU"), types.StringValue("CD654321-EU")},
+		{"no api value keeps null", "", types.StringNull(), types.StringNull()},
+		{"no api value resolves unknown to empty", "", types.StringUnknown(), types.StringValue("")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := knownString(c.fromAPI, c.planned); !got.Equal(c.want) {
+				t.Errorf("knownString(%q, %v) = %v, want %v", c.fromAPI, c.planned, got, c.want)
 			}
 		})
 	}

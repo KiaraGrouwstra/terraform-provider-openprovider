@@ -64,7 +64,8 @@ type ListDomainsResponse struct {
 	} `json:"data"`
 }
 
-// List retrieves a list of domains from the Openprovider API.
+// List retrieves every domain from the Openprovider API, paging through the
+// account's full listing rather than handing back only the API's first page.
 func List(c *client.Client) ([]Domain, error) {
 	return ListWith(c, ListOptions{})
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/charpand/terraform-provider-openprovider/internal/client"
 	"github.com/charpand/terraform-provider-openprovider/internal/client/domains"
@@ -18,9 +19,47 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+// The values `on_destroy` takes.
+const (
+	onDestroyRetain = "retain"
+	onDestroyDelete = "delete"
+)
+
+// oneOfValidator accepts a known string only when it is one of `allowed`.
+type oneOfValidator struct {
+	allowed []string
+}
+
+func (v oneOfValidator) Description(_ context.Context) string {
+	return fmt.Sprintf("value must be one of: %s", strings.Join(v.allowed, ", "))
+}
+
+func (v oneOfValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v oneOfValidator) ValidateString(ctx context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	value := req.ConfigValue.ValueString()
+	for _, allowed := range v.allowed {
+		if value == allowed {
+			return
+		}
+	}
+	resp.Diagnostics.AddAttributeError(
+		req.Path,
+		"Invalid Attribute Value",
+		fmt.Sprintf("%s is not one of: %s.", value, strings.Join(v.allowed, ", ")),
+	)
+}
 
 // Ensure the implementation satisfies the expected interfaces.
 var (
@@ -240,6 +279,15 @@ func (r *DomainResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Optional:            true,
 				Computed:            true,
 				Default:             booldefault.StaticBool(false),
+			},
+			"on_destroy": schema.StringAttribute{
+				MarkdownDescription: "What destroying this resource does to the domain at OpenProvider. `retain` (the default) only forgets the domain in state: it stays in the account, and a later `import` takes it back. `delete` deletes the domain at OpenProvider through `DELETE /v1beta/domains/{id}`; where the registry allows it the domain then goes into OpenProvider's soft quarantine, from where a restore is priced separately. Use `lifecycle { prevent_destroy = true }` to refuse a destroy altogether.",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString(onDestroyRetain),
+				Validators: []validator.String{
+					oneOfValidator{allowed: []string{onDestroyRetain, onDestroyDelete}},
+				},
 			},
 			"owner_handle": schema.StringAttribute{
 				MarkdownDescription: "The owner contact handle for the domain.",
@@ -502,6 +550,23 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 		}
 	}
 
+	// The create and transfer responses carry the order (`id`, `status`,
+	// `activation_date`) and not the domain's contacts, so a handle the
+	// request omitted would stay unknown after apply, which Terraform refuses
+	// as a provider bug. The domain is read back the way `Read` reads it, and
+	// mapped from that. A read-back that fails does not fail the create: the
+	// order stands, and a failed create would record nothing of it. The
+	// response is mapped instead, with the plan's known values kept, and the
+	// next refresh fills the rest.
+	if registered, err := getDomainByName(r.client, domainName); err != nil {
+		resp.Diagnostics.AddWarning(
+			"Error Reading Domain After Create",
+			fmt.Sprintf("Could not read domain %s back after its creation, so its state holds the creation response until the next refresh: %s", domainName, err.Error()),
+		)
+	} else if registered != nil {
+		domain = registered
+	}
+
 	// Set ID to the domain name
 	plan.ID = types.StringValue(domainName)
 
@@ -509,16 +574,10 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 	plan.Status = types.StringValue(domain.Status)
 
 	// Map contact handles from response
-	plan.OwnerHandle = types.StringValue(domain.OwnerHandle)
-	if domain.AdminHandle != "" {
-		plan.AdminHandle = types.StringValue(domain.AdminHandle)
-	}
-	if domain.TechHandle != "" {
-		plan.TechHandle = types.StringValue(domain.TechHandle)
-	}
-	if domain.BillingHandle != "" {
-		plan.BillingHandle = types.StringValue(domain.BillingHandle)
-	}
+	plan.OwnerHandle = knownString(domain.OwnerHandle, plan.OwnerHandle)
+	plan.AdminHandle = knownString(domain.AdminHandle, plan.AdminHandle)
+	plan.TechHandle = knownString(domain.TechHandle, plan.TechHandle)
+	plan.BillingHandle = knownString(domain.BillingHandle, plan.BillingHandle)
 
 	// Map autorenew from response
 	if domain.Autorenew == "on" {
@@ -815,12 +874,46 @@ func (r *DomainResource) refreshAfterUpdate(ctx context.Context, plan DomainMode
 	resp.Diagnostics.Append(resp.State.Set(ctx, &final)...)
 }
 
-// Delete prevents deletion of domains as a safety measure.
-func (r *DomainResource) Delete(_ context.Context, _ resource.DeleteRequest, resp *resource.DeleteResponse) {
-	resp.Diagnostics.AddError(
-		"Domain Deletion Not Allowed",
-		"Domains cannot be deleted through this provider as a safety measure. Domain deletions are irreversible and must be performed manually outside of Terraform. To stop managing a domain, remove it from your Terraform configuration.",
-	)
+// Delete does to the domain what `on_destroy` says. With `retain` the domain
+// only leaves the state and stays in the account; with `delete` it is deleted
+// at OpenProvider. Either way the resource leaves the state once this returns
+// without error.
+func (r *DomainResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state DomainModel
+	diags := req.State.Get(ctx, &state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// A state written before `on_destroy` existed carries no value for it,
+	// and retaining is what the previous behaviour amounted to once the
+	// resource was removed from the configuration.
+	if state.OnDestroy.IsNull() || state.OnDestroy.ValueString() == onDestroyRetain {
+		return
+	}
+
+	domainName := state.Domain.ValueString()
+	domain, err := getDomainByName(r.client, domainName)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error Deleting Domain",
+			fmt.Sprintf("Could not look up domain %s before deleting it: %s", domainName, err.Error()),
+		)
+		return
+	}
+	if domain == nil {
+		// Already gone from the account: nothing left to delete.
+		return
+	}
+
+	if err := domains.Delete(r.client, domain.ID); err != nil {
+		resp.Diagnostics.AddError(
+			"Error Deleting Domain",
+			fmt.Sprintf("Could not delete domain %s: %s", domainName, err.Error()),
+		)
+		return
+	}
 }
 
 // ImportState imports an existing resource into Terraform.
@@ -831,6 +924,9 @@ func (r *DomainResource) ImportState(ctx context.Context, req resource.ImportSta
 	// Set both id and domain to the import ID
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), domainName)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("domain"), domainName)...)
+	// An imported domain is retained on destroy until the configuration says
+	// otherwise, the same as one this provider registered.
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("on_destroy"), onDestroyRetain)...)
 
 	// Note: auth_code cannot be retrieved from the API after transfer is initiated
 	// Users must provide it in their configuration if the domain was transferred
@@ -848,6 +944,16 @@ func domainIsFree(c *client.Client, domainName string) (bool, error) {
 		return false, err
 	}
 	return result.Status == "free", nil
+}
+
+// knownString is the API's value for a string attribute, or the plan's when
+// the API has none and the plan's is known: a computed attribute must not
+// stay unknown after apply, and a configured one must not change.
+func knownString(fromAPI string, planned types.String) types.String {
+	if fromAPI == "" && !planned.IsUnknown() {
+		return planned
+	}
+	return types.StringValue(fromAPI)
 }
 
 // getDomainByName finds a domain by its name using the List API.
