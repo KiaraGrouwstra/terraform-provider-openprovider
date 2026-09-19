@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `max_cost` and `currency` on `openprovider_domain`: a registration or transfer is quoted before it is ordered, and the apply fails without spending where the quote exceeds the bound
 - `openprovider_domain_check` data source: whether a domain is available to register, asked of the registry rather than the account
+- `on_destroy` on `openprovider_domain`: a destroy retains the domain at OpenProvider (the default) or deletes it, where it used to fail
 - `mise.toml` for local tool version management
 - `CLAUDE.md` with project-specific development guidelines
 
