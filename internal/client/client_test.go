@@ -172,7 +172,7 @@ func TestDoRepeatsAGatewayError(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Expected the third call to answer, got %v", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if transport.calls != 3 {
 			t.Errorf("Expected 3 calls, got %d", transport.calls)
 		}
@@ -187,7 +187,7 @@ func TestDoRepeatsAGatewayError(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Expected the second call to answer, got %v", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if len(transport.bodies) != 2 || transport.bodies[0] != `{"a":1}` || transport.bodies[1] != `{"a":1}` {
 			t.Errorf("Expected the body on both calls, got %q", transport.bodies)
 		}

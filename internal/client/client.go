@@ -100,7 +100,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	for attempt := 1; ; attempt++ {
 		resp, err = c.send(req)
 		if err == nil && resp.StatusCode == http.StatusUnauthorized && c.Username != "" && c.Password != "" {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			// Try to login and retry the request
 			token, loginErr := authentication.Login(c.HTTPClient, c.BaseURL, "", c.Username, c.Password)
 			if loginErr != nil {
@@ -118,7 +118,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		}
 		delay := retryDelay(attempt, resp, time.Now())
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		if waitErr := wait(req.Context(), delay); waitErr != nil {
 			return nil, waitErr
