@@ -35,3 +35,14 @@ type DnssecKeyModel struct {
 	Protocol  types.Int64  `tfsdk:"protocol"`
 	PublicKey types.String `tfsdk:"public_key"`
 }
+
+// DomainCheckModel describes the data source data model for a domain
+// availability check.
+type DomainCheckModel struct {
+	ID        types.String `tfsdk:"id"`
+	Domain    types.String `tfsdk:"domain"`
+	Status    types.String `tfsdk:"status"`
+	Available types.Bool   `tfsdk:"available"`
+	IsPremium types.Bool   `tfsdk:"is_premium"`
+	Reason    types.String `tfsdk:"reason"`
+}
