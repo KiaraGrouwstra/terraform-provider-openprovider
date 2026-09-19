@@ -551,6 +551,23 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 		}
 	}
 
+	// The create and transfer responses carry the order (`id`, `status`,
+	// `activation_date`) and not the domain's contacts, so a handle the
+	// request omitted would stay unknown after apply, which Terraform refuses
+	// as a provider bug. The domain is read back the way `Read` reads it, and
+	// mapped from that. A read-back that fails does not fail the create: the
+	// order stands, and a failed create would record nothing of it. The
+	// response is mapped instead, with the plan's known values kept, and the
+	// next refresh fills the rest.
+	if registered, err := getDomainByName(r.client, domainName); err != nil {
+		resp.Diagnostics.AddWarning(
+			"Error Reading Domain After Create",
+			fmt.Sprintf("Could not read domain %s back after its creation, so its state holds the creation response until the next refresh: %s", domainName, err.Error()),
+		)
+	} else if registered != nil {
+		domain = registered
+	}
+
 	// Set ID to the domain name
 	plan.ID = types.StringValue(domainName)
 
@@ -558,16 +575,10 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 	plan.Status = types.StringValue(domain.Status)
 
 	// Map contact handles from response
-	plan.OwnerHandle = types.StringValue(domain.OwnerHandle)
-	if domain.AdminHandle != "" {
-		plan.AdminHandle = types.StringValue(domain.AdminHandle)
-	}
-	if domain.TechHandle != "" {
-		plan.TechHandle = types.StringValue(domain.TechHandle)
-	}
-	if domain.BillingHandle != "" {
-		plan.BillingHandle = types.StringValue(domain.BillingHandle)
-	}
+	plan.OwnerHandle = knownString(domain.OwnerHandle, plan.OwnerHandle)
+	plan.AdminHandle = knownString(domain.AdminHandle, plan.AdminHandle)
+	plan.TechHandle = knownString(domain.TechHandle, plan.TechHandle)
+	plan.BillingHandle = knownString(domain.BillingHandle, plan.BillingHandle)
 
 	// Map autorenew from response
 	if domain.Autorenew == "on" {
@@ -903,6 +914,16 @@ func (r *DomainResource) ImportState(ctx context.Context, req resource.ImportSta
 		"Auth Code Required for Transferred Domains",
 		"If this domain was transferred to OpenProvider, the authorization code cannot be retrieved from the API. You must provide the auth_code in your Terraform configuration after import, or the resource will show a diff on the next plan.",
 	)
+}
+
+// knownString is the API's value for a string attribute, or the plan's when
+// the API has none and the plan's is known: a computed attribute must not
+// stay unknown after apply, and a configured one must not change.
+func knownString(fromAPI string, planned types.String) types.String {
+	if fromAPI == "" && !planned.IsUnknown() {
+		return planned
+	}
+	return types.StringValue(fromAPI)
 }
 
 // getDomainByName finds a domain by its name using the List API.
