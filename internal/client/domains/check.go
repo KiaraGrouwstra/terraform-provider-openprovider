@@ -76,3 +76,22 @@ func Check(c *client.Client, domainsToCheck []CheckDomain) ([]CheckResult, error
 
 	return result.Data.Results, nil
 }
+
+// CheckOne asks the registry whether a single full domain name is
+// available, splitting it into the name and extension the check endpoint
+// wants and unwrapping the one result a single-domain request gets back.
+func CheckOne(c *client.Client, domainName string) (CheckResult, error) {
+	name, extension, ok := SplitFullName(domainName)
+	if !ok {
+		return CheckResult{}, fmt.Errorf("domain %q must be a name and an extension, like example.com", domainName)
+	}
+
+	results, err := Check(c, []CheckDomain{{Name: name, Extension: extension}})
+	if err != nil {
+		return CheckResult{}, err
+	}
+	if len(results) != 1 {
+		return CheckResult{}, fmt.Errorf("expected one check result for domain %s, got %d", domainName, len(results))
+	}
+	return results[0], nil
+}

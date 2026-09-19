@@ -2,9 +2,7 @@
 package domains
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
+	"strings"
 
 	"github.com/charpand/terraform-provider-openprovider/internal/client"
 )
@@ -58,61 +56,31 @@ type Domain struct {
 
 // ListDomainsResponse represents a response from the domains listing endpoint.
 type ListDomainsResponse struct {
-	Code int `json:"code"`
+	Code int    `json:"code"`
+	Desc string `json:"desc,omitempty"`
 	Data struct {
 		Results []Domain `json:"results"`
 		Total   int      `json:"total"`
 	} `json:"data"`
 }
 
-// listPageSize is how many domains one request asks for while List pages
-// through an account. The API's own default page is far smaller than many
-// accounts' domain count, so listing everything must ask more than once.
-// A var, as client.retryBase is, so the tests can shrink it.
-var listPageSize = 100
-
 // List retrieves every domain from the Openprovider API, paging through the
 // account's full listing rather than handing back only the API's first page.
 func List(c *client.Client) ([]Domain, error) {
-	all := make([]Domain, 0)
-	offset := 0
-	for {
-		page, total, err := listPage(c, listPageSize, offset)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, page...)
-		offset += len(page)
-		// An empty page stops the loop even if total disagrees, so a bad or
-		// missing total can't spin this forever.
-		if len(page) == 0 || offset >= total {
-			break
-		}
-	}
-	return all, nil
+	return ListWith(c, ListOptions{})
 }
 
-// listPage asks for one page of at most limit domains, starting at offset,
-// and returns it along with the account's total count.
-func listPage(c *client.Client, limit, offset int) ([]Domain, int, error) {
-	path := fmt.Sprintf("/v1beta/domains?limit=%d&offset=%d", limit, offset)
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s%s", c.BaseURL, path), nil)
-	if err != nil {
-		return nil, 0, err
+// SplitFullName splits a domain's full name into the name and extension the
+// API's `domain` object carries as separate fields. The split is on the
+// first dot, not the last: OpenProvider treats a second-level country
+// suffix (`co.uk`, `com.au`, and the like) as one extension, so
+// "example.co.uk" is name "example", extension "co.uk", not name
+// "example.co", extension "uk". ok is false when domainName has no dot to
+// split on, or nothing on one side of it.
+func SplitFullName(domainName string) (name, extension string, ok bool) {
+	name, extension, found := strings.Cut(domainName, ".")
+	if !found || name == "" || extension == "" {
+		return "", "", false
 	}
-
-	resp, err := c.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	var results ListDomainsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
-		return nil, 0, err
-	}
-	return results.Data.Results, results.Data.Total, nil
+	return name, extension, true
 }

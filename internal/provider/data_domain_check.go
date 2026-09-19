@@ -4,7 +4,6 @@ package provider
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/charpand/terraform-provider-openprovider/internal/client"
 	"github.com/charpand/terraform-provider-openprovider/internal/client/domains"
@@ -98,8 +97,8 @@ func (d *DomainCheckDataSource) Read(ctx context.Context, req datasource.ReadReq
 	}
 
 	domainName := config.Domain.ValueString()
-	name, extension, found := strings.Cut(domainName, ".")
-	if !found || name == "" || extension == "" {
+	name, extension, ok := domains.SplitFullName(domainName)
+	if !ok {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("domain"),
 			"Invalid Domain Name",

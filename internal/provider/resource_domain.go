@@ -415,19 +415,18 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	// Parse domain name into name and extension
+	// Parse domain name into name and extension. The split is on the first
+	// dot, matching the API's own extension field: "example.co.uk" is name
+	// "example", extension "co.uk", not name "example.co", extension "uk".
 	domainName := plan.Domain.ValueString()
-	parts := strings.Split(domainName, ".")
-	if len(parts) < 2 {
+	name, extension, ok := domains.SplitFullName(domainName)
+	if !ok {
 		resp.Diagnostics.AddError(
 			"Invalid Domain Domain",
 			fmt.Sprintf("Domain name must include extension (e.g., example.com), got: %s", domainName),
 		)
 		return
 	}
-
-	name := strings.Join(parts[:len(parts)-1], ".")
-	extension := parts[len(parts)-1]
 
 	var domain *domains.Domain
 	var err error
@@ -637,8 +636,29 @@ func (r *DomainResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	if domain == nil {
-		// Domain not found - remove from state
-		resp.State.RemoveResource(ctx)
+		// The listing lags the registry: a domain just registered is not in it
+		// yet, and a listing under load has come back empty for a held name.
+		// Dropping the domain from state on that alone has the next apply buy
+		// it again. So the absence is confirmed by the availability check,
+		// which asks the registry: a name that is free is gone from the
+		// account and leaves the state; a name that is taken stays, as the
+		// state last read it, until a listing shows it again.
+		free, err := domainIsFree(r.client, domainName)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error Reading Domain",
+				fmt.Sprintf("Could not confirm that domain %s left the account, as the listing does not show it: %s", domainName, err.Error()),
+			)
+			return
+		}
+		if free {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddWarning(
+			"Domain Not Listed",
+			fmt.Sprintf("The account's listing does not show domain %s, but the registry says it is taken, so its state is kept as last read.", domainName),
+		)
 		return
 	}
 
@@ -916,6 +936,16 @@ func (r *DomainResource) ImportState(ctx context.Context, req resource.ImportSta
 	)
 }
 
+// domainIsFree asks the registry, through the availability check, whether
+// nobody holds the domain: the one answer the account's listing cannot lag on.
+func domainIsFree(c *client.Client, domainName string) (bool, error) {
+	result, err := domains.CheckOne(c, domainName)
+	if err != nil {
+		return false, err
+	}
+	return result.Status == "free", nil
+}
+
 // knownString is the API's value for a string attribute, or the plan's when
 // the API has none and the plan's is known: a computed attribute must not
 // stay unknown after apply, and a configured one must not change.
@@ -929,12 +959,14 @@ func knownString(fromAPI string, planned types.String) types.String {
 // getDomainByName finds a domain by its name using the List API.
 // Returns nil if the domain is not found.
 func getDomainByName(c *client.Client, domainName string) (*domains.Domain, error) {
-	domainList, err := domains.List(c)
+	// Filtered on the API's side, so the lookup does not depend on the
+	// account fitting in one page of the listing.
+	domainList, err := domains.ListWith(c, domains.ListOptions{FullName: domainName})
 	if err != nil {
 		return nil, err
 	}
 
-	// Search for domain by name
+	// The filter matches on the name; keep only the exact one.
 	for _, domain := range domainList {
 		fullName := domain.Domain.Name + "." + domain.Domain.Extension
 		if fullName == domainName {

@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `max_cost` and `currency` on `openprovider_domain`: a registration or transfer is quoted before it is ordered, and the apply fails without spending where the quote exceeds the bound
 - `openprovider_domain_check` data source: whether a domain is available to register, asked of the registry rather than the account
+- `openprovider_domains` data source: the domains the account holds, optionally filtered to one `full_name`, an empty list where the account does not hold it
+- `full_name` filtering in the domains client, which the domain lookup by name now uses instead of paging through the account
 - `on_destroy` on `openprovider_domain`: a destroy retains the domain at OpenProvider (the default) or deletes it, where it used to fail
 - `mise.toml` for local tool version management
 - `CLAUDE.md` with project-specific development guidelines
@@ -27,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `openprovider_nsgroup`: `Create` reads the group back to expose its computed attributes instead of leaving them unknown, `Read` handles a group deleted outside Terraform, `Delete` deletes the group at OpenProvider only when `allow_deletion` is set (state-only removal by default, matching `openprovider_dns_record`), and a group deleted outside Terraform is dropped from state instead of surfacing as an error (the same `client.Client.Do` retry/error-reporting change from #110 that broke `openprovider_glue_record`)
 - `openprovider_glue_record`: a record deleted outside Terraform is now dropped from state instead of erroring on `Read`, and destroying an already-deleted record is a no-op again instead of failing (a 404 from `client.Client.Do` was no longer told apart from any other error after its retry/error-reporting change)
 - `openprovider_domain`: the request timeout is now long enough for a registration to complete, a failed request reports the API's reason instead of a bare status, an update no longer drops the order fields (`period`, `max_cost`, `currency`), and a plan with `dnssec_keys` left unstated no longer reports a change on every run
+- `openprovider_domain` no longer leaves the state when the account's listing lags behind a registration: an absent listing is confirmed against the availability check, and a listing whose envelope reports a non-zero `code` is an error rather than an empty account
 - Resolved `go get -u all` failure by fixing `mergo` module path conflict
 - Resolved `openpgp: key expired` error in documentation workflow by explicitly setting up Terraform
 

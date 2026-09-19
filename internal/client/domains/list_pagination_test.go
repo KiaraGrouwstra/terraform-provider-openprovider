@@ -12,8 +12,9 @@ import (
 
 // pagedAPI stands in for an account holding `total` domains, answering each
 // request's `limit`/`offset` with that slice and recording every query it
-// was asked with.
-func pagedAPI(t *testing.T, total int, queries *[]string) *httptest.Server {
+// was asked with. Asking past `refuseAfter` requests answers a refused
+// listing instead, to exercise a page failing partway through.
+func pagedAPI(t *testing.T, total int, refuseAfter int, queries *[]string) *httptest.Server {
 	t.Helper()
 	all := make([]map[string]any, total)
 	for i := range all {
@@ -26,6 +27,15 @@ func pagedAPI(t *testing.T, total int, queries *[]string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		*queries = append(*queries, r.URL.RawQuery)
+
+		if refuseAfter > 0 && len(*queries) > refuseAfter {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 196,
+				"desc": "Authentication failure",
+				"data": map[string]any{"results": []map[string]any{}, "total": 0},
+			})
+			return
+		}
 
 		limit := 100
 		if v := r.URL.Query().Get("limit"); v != "" {
@@ -51,17 +61,17 @@ func pagedAPI(t *testing.T, total int, queries *[]string) *httptest.Server {
 	}))
 }
 
-func TestListPagesThroughTheWholeAccount(t *testing.T) {
+func TestListWithPagesThroughTheWholeAccount(t *testing.T) {
 	old := listPageSize
 	listPageSize = 2
 	defer func() { listPageSize = old }()
 
 	var queries []string
-	server := pagedAPI(t, 5, &queries)
+	server := pagedAPI(t, 5, 0, &queries)
 	defer server.Close()
 	c := client.NewClient(client.Config{BaseURL: server.URL, Token: "test", HTTPClient: server.Client()})
 
-	got, err := List(c)
+	got, err := ListWith(c, ListOptions{})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -70,5 +80,39 @@ func TestListPagesThroughTheWholeAccount(t *testing.T) {
 	}
 	if len(queries) != 3 {
 		t.Fatalf("expected 3 requests of 2 to cover 5 domains, got %d: %v", len(queries), queries)
+	}
+}
+
+func TestListWithHonoursAnExplicitLimit(t *testing.T) {
+	var queries []string
+	server := pagedAPI(t, 5, 0, &queries)
+	defer server.Close()
+	c := client.NewClient(client.Config{BaseURL: server.URL, Token: "test", HTTPClient: server.Client()})
+
+	got, err := ListWith(c, ListOptions{Limit: 2, Offset: 1})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected exactly the requested page of 2, got %d", len(got))
+	}
+	if len(queries) != 1 {
+		t.Fatalf("an explicit page should be a single request, got %d", len(queries))
+	}
+}
+
+func TestListWithRefusesAPageThatFailsPartway(t *testing.T) {
+	old := listPageSize
+	listPageSize = 2
+	defer func() { listPageSize = old }()
+
+	var queries []string
+	// The first page (of 2) succeeds; the second is refused.
+	server := pagedAPI(t, 5, 1, &queries)
+	defer server.Close()
+	c := client.NewClient(client.Config{BaseURL: server.URL, Token: "test", HTTPClient: server.Client()})
+
+	if _, err := ListWith(c, ListOptions{}); err == nil {
+		t.Fatal("expected the refused second page to surface as an error, not a partial list")
 	}
 }
