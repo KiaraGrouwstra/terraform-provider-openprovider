@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `data.openprovider_nsgroup`: `allow_missing` makes a group that does not exist a result instead of an error, and `exists` tells whether the account holds the group, so a configuration can find out if it must adopt the group or create it
 - `data.openprovider_customer_exists`: reads whether the account holds a customer handle, and keeps the data of the customer out of the state
 - `data.openprovider_tld`: reads which contact roles a domain of an extension takes
+- `openprovider_domain_transfer_restart`: sends a transfer that failed to the registry again, without a new order
 - `openprovider_domain`: `additional_data`, a map of strings that the registration and the transfer send as `additional_data`, for example the acceptance flag of the terms of a registry (`dk_acceptance = "1"`); a change after the order gives a warning
 - CI: supply-chain checks: `zizmor` (workflow analysis), `govulncheck` (reachable Go vulnerabilities, also daily), dependency review on pull requests, CodeQL (Go and workflows), OpenSSF Scorecard, `gitleaks` secret scanning (also in the pre-commit hook), `go mod verify`, and `harden-runner` in audit mode on the `ci.yml` jobs
 - Releases attest signed SLSA build provenance for every archive (`gh attestation verify`); `SECURITY.md` documents how to verify a release
